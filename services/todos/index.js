@@ -1,8 +1,29 @@
 "use strict";
 
 const loki = require("lokijs");
-const db = new loki("todos.json", { env: "NODEJS", autosave: true });
-const todos = db.addCollection("todos");
+const db = new loki('todos.db', {
+	autoload: true,
+	autoloadCallback : databaseInitialize,
+	autosave: true, 
+	autosaveInterval: 4000
+});
+
+// implement the autoloadback referenced in loki constructor
+function databaseInitialize() {
+  let entries = db.getCollection("todos");
+  if (entries === null) {
+    entries = db.addCollection("todos");
+  }
+
+  // kick off any program logic or start listening to external events
+  runProgramLogic();
+}
+
+// example method with any bootstrap logic to run after database initialized
+function runProgramLogic() {
+  let entryCount = db.getCollection("todos").count();
+  console.log("number of entries in database : " + entryCount);
+}
 
 const opts = {
   schema: {
@@ -19,10 +40,13 @@ const opts = {
   }
 };
 
+
+
 module.exports = async function(fastify, opts) {
   fastify
     .get("/todos/:todoId", async function(request, reply) {
       request.log.info(`TodoId passed in is  ${request.params.todoId}`);
+      let todos = db.getCollection('todos')
       let todo = todos.get(request.params.todoId);
       if (todo === null) {
         reply.code(404).send();
@@ -36,7 +60,8 @@ module.exports = async function(fastify, opts) {
       }
     })
     .post("/todos", opts, async (request, reply) => {
-      reply.header("Content-Type", "application/json").code(200);
+      reply.header("Content-Type", "application/json").code(201);
+      let todos = db.getCollection('todos')
       let newTodo = todos.insert(request.body);
       return Object.assign({}, newTodo, {
         $loki: undefined,
@@ -45,15 +70,34 @@ module.exports = async function(fastify, opts) {
       });
     })
     .put("/todos/:todoId", opts, async (request, reply) => {
-      reply.header("Content-Type", "application/json").code(201);
-      return {
-        id: request.params.todoId,
-        name: "My Todo",
-        description: "Descr",
-        completed: false
-      };
+      reply.header("Content-Type", "application/json").code(200);
+      let todos = db.getCollection('todos')
+      let todo = todos.get(request.params.todoId);
+      if (todo === null) {
+        reply.code(404).send();
+      } else {
+        let newTodo = request.body;
+        request.log.info(`newTodo : ${JSON.stringify(newTodo)}`)
+        let updatedTodo = Object.assign({}, todo, newTodo);
+        request.log.info(`Updated TODO : ${JSON.stringify(updatedTodo)}`)
+        todos.update(updatedTodo)
+        return Object.assign({}, updatedTodo, {
+          $loki: undefined,
+          meta: undefined,
+          id: todo.$loki
+        });
+      }
     })
     .delete("/todos/:todoId", async (request, reply) => {
-      reply.code(204);
+      let todos = db.getCollection('todos')
+      let todo = todos.get(request.params.todoId);
+      
+      if (todo === null) {
+        reply.code(404).send();
+      } else {
+        todos.remove({$loki: request.params.todoId});
+        reply.header("Content-Type", "application/json").code(204);
+        return {};
+      }
     });
 };
